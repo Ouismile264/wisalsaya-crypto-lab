@@ -1,44 +1,21 @@
-# Wisalsaya Crypto Dashboard
+# Wisalsaya Crypto Dashboard v2
 
-Dashboard ส่วนตัวสำหรับฝึกอ่านตลาด Crypto แบบสั้น กระชับ และเน้นรักษาเงินต้น
+## ฟังก์ชันใหม่
+- Executive Decision Card
+- Candlestick Chart
+- EMA 20 / EMA 50
+- RSI และ Volume Ratio
+- Support / Resistance
+- Probability Simulation
+- Risk Calculator
+- Portfolio Donut Chart
+- Morning Checklist
+- Trading Journal
 
-## ฟังก์ชันในเวอร์ชันนี้
+## วิธีอัปเดต
+อัปโหลดไฟล์ `app.py`, `requirements.txt` และ `README.md` ชุดนี้ทับไฟล์เดิมใน GitHub แล้วกด Commit changes
 
-- ราคาตลาด BTC / ETH / BNB / DOGE
-- Market Score 0–100
-- Trend, RSI, Volume, Volatility และ Sentiment
-- Support / Resistance Zone
-- Fear & Greed Index
-- Portfolio Snapshot
-- Trading Lab ทุนตั้งต้น 1,000 บาท
-- Journal และดาวน์โหลด CSV
-- Responsive สำหรับ iPhone / iPad / Computer
+Streamlit จะอัปเดตแอปให้อัตโนมัติภายในไม่กี่นาที
 
-## Deploy ผ่าน Streamlit Community Cloud
-
-1. Upload ไฟล์ทั้งหมดในโฟลเดอร์นี้เข้า GitHub Repository
-2. เปิด Streamlit Community Cloud
-3. Sign in ด้วย GitHub
-4. เลือก Create app
-5. เลือก Repository ของคุณ
-6. Main file path: `app.py`
-7. กด Deploy
-
-## โครงสร้างไฟล์
-
-```text
-wisalsaya-crypto-dashboard/
-├── app.py
-├── requirements.txt
-├── README.md
-└── .streamlit/
-    └── config.toml
-```
-
-## หมายเหตุ
-
-- ไม่ต้องใช้ Binance API Key
-- ไม่ต้องใส่ Password, OTP หรือ API Secret
-- Dashboard ดึงเฉพาะ Public Market Data
-- Journal ใน Streamlit Session จะหายเมื่อ App Restart จึงควรกดดาวน์โหลด CSV เป็นระยะ
-- ระบบนี้เป็นเครื่องมือเพื่อการเรียนรู้ ไม่ใช่คำแนะนำหรือคำสั่งซื้อขาย
+## ความปลอดภัย
+ไม่ต้องใช้ Binance API Key, Password, OTP หรือ API Secret
