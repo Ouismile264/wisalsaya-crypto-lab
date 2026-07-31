@@ -1,28 +1,22 @@
-# Wisalsaya Crypto Decision Lab v2.1
+# Wisalsaya Crypto Decision Lab v3.0
 
-## ฟังก์ชันหลัก
-- วิเคราะห์ตลาดอัตโนมัติ 20 เหรียญ
-- Binance Public Market Data โดยไม่ใช้ API Key
-- คะแนน 0–100 แยก Trend, Momentum, Volume, Volatility และ News Impact proxy
-- สถานะ READY / WATCH / WAIT / AVOID
-- Top Opportunities อัตโนมัติ
-- Chart Lab พร้อม EMA20, EMA50, Support และ Resistance
-- Probability Simulation: Up / Sideway / Down
-- Paper Trading Lab พร้อมติดตาม Stop Loss และ Target เมื่อแอปรีเฟรช
-- คำนวณกำไร/ขาดทุนจำลองและ Daily Risk Limit
-- STOP FOR TODAY เมื่อขาดทุนถึงขีดจำกัด
-- Trading Journal และดาวน์โหลด CSV
-- Beginner Coach ภาษาไทย
+Full Premium Streamlit dashboard for crypto market learning and paper trading.
 
-## วิธีอัปเดตบน GitHub
-1. แตกไฟล์ ZIP
-2. อัปโหลด `app.py`, `requirements.txt`, `README.md` ทับไฟล์เดิม
-3. กด Commit changes
-4. Streamlit Community Cloud จะ Deploy ใหม่อัตโนมัติ
+## Features
+- 20-coin automated scanner
+- Top 5 opportunity ranking
+- Decision Box (WAIT / WATCH / OPPORTUNITY)
+- Chart Lab with EMA20, EMA50, RSI, volume, support/resistance
+- Probability view and Thai beginner explanation
+- RSS news impact panel
+- Paper Trade portfolio with daily risk limit
+- Trading Journal CSV export
+- Responsive premium dark UI
 
-## หมายเหตุสำคัญ
-- Paper Trade และ Journal เก็บใน Streamlit Session จึงอาจหายเมื่อแอป restart
-- ควรดาวน์โหลด CSV เก็บไว้ทุกวัน
-- Version ถัดไปสามารถเพิ่มฐานข้อมูลถาวร เช่น Supabase หรือ Google Sheets
-- ไม่มีการเชื่อม Binance API Key, Password, OTP หรือ API Secret
-- ไม่มีคำสั่งซื้อขายอัตโนมัติ
+## Deploy
+1. Upload `app.py`, `requirements.txt`, and `README.md` to GitHub.
+2. On Streamlit Community Cloud, set the main file to `app.py`.
+3. Reboot the app after deployment.
+
+## Important
+Paper trading and journal data are stored in Streamlit session memory and may reset when the app restarts. Download CSV regularly. This app does not connect to exchange API keys or place orders.
