@@ -12,6 +12,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from storage import Storage
+
 st.set_page_config(
     page_title="Wisalsaya Crypto Decision Lab v3",
     page_icon="✦",
@@ -21,6 +23,9 @@ st.set_page_config(
 
 BANGKOK = ZoneInfo("Asia/Bangkok")
 APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = APP_DIR / "data"
+DB_PATH = DATA_DIR / "wisalsaya_lab.sqlite3"
+storage = Storage(DB_PATH)
 
 COINS = {
     "BTC": "BTCUSDT", "ETH": "ETHUSDT", "BNB": "BNBUSDT", "SOL": "SOLUSDT",
@@ -101,7 +106,10 @@ def klines(symbol: str, interval: str = "4h", limit: int = 240) -> pd.DataFrame:
             ])
             for col in ("open","high","low","close","volume","quote_volume"):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-            df["time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(BANGKOK)
+            # Keep Bangkok wall-clock time as a timezone-naive Plotly axis. This
+            # prevents browsers from converting the values back to local/UTC.
+            df["time"] = (pd.to_datetime(df["open_time"], unit="ms", utc=True)
+                          .dt.tz_convert(BANGKOK).dt.tz_localize(None))
             return df.dropna(subset=["close"])
         except Exception:
             continue
@@ -226,28 +234,37 @@ def decision_from_score(score: int, btc_trend: str, btc_rsi: float) -> tuple[str
         return "WATCH", "ตลาดเริ่มน่าสนใจ แต่ยังไม่ชัดเจน", "โฟกัสการเฝ้าดู ไม่ไล่ราคา"
     return "WAIT", "วันนี้เหมาะกับการรอ", "รักษาเงินต้นและฝึกอ่านตลาด"
 
-def load_market(interval: str) -> dict:
+def load_market(interval: str, limit: int) -> dict:
     fng, _ = fear_greed()
     out = {}
-    btc_t = ticker(COINS["BTC"]); btc_df = klines(COINS["BTC"], interval)
+    btc_t = ticker(COINS["BTC"]); btc_df = klines(COINS["BTC"], interval, limit)
     btc_a = analyze(btc_t, btc_df, fng, None)
     out["BTC"] = {**btc_t,"df":btc_df,"a":btc_a}
     for name, symbol in COINS.items():
         if name == "BTC": continue
-        t = ticker(symbol); df = klines(symbol, interval)
+        t = ticker(symbol); df = klines(symbol, interval, limit)
         out[name] = {**t,"df":df,"a":analyze(t,df,fng,btc_a["trend"])}
     return out
 
 def candle_chart(df: pd.DataFrame, symbol: str, a: dict) -> go.Figure:
-    x = df.tail(120).copy(); x["ema20"] = x["close"].ewm(span=20,adjust=False).mean(); x["ema50"] = x["close"].ewm(span=50,adjust=False).mean()
+    x = df.copy(); x["ema20"] = x["close"].ewm(span=20,adjust=False).mean(); x["ema50"] = x["close"].ewm(span=50,adjust=False).mean()
     fig = go.Figure()
     fig.add_trace(go.Candlestick(x=x["time"],open=x["open"],high=x["high"],low=x["low"],close=x["close"],name=symbol,increasing_line_color="#56d6a5",decreasing_line_color="#ff788e"))
     fig.add_trace(go.Scatter(x=x["time"],y=x["ema20"],name="EMA20",line=dict(width=1.6)))
     fig.add_trace(go.Scatter(x=x["time"],y=x["ema50"],name="EMA50",line=dict(width=1.6,dash="dot")))
     for y,label,color in [(a["support"],"Support","#56d6a5"),(a["resistance"],"Resistance","#ff788e"),(a["trigger"],"Trigger","#6fc9ff")]:
         fig.add_hline(y=y,line_dash="dash",line_color=color,annotation_text=label,annotation_position="top left")
-    fig.update_layout(height=520,margin=dict(l=8,r=8,t=22,b=8),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#dce7ee"),xaxis_rangeslider_visible=False,xaxis=dict(showgrid=False),yaxis=dict(gridcolor="rgba(255,255,255,.06)"),legend=dict(orientation="h",y=1.02,x=0))
+    fig.update_layout(height=560,dragmode="pan",hovermode="x unified",margin=dict(l=8,r=8,t=28,b=8),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#dce7ee"),xaxis_rangeslider_visible=True,xaxis=dict(showgrid=False,type="date",title="เวลา Asia/Bangkok"),yaxis=dict(gridcolor="rgba(255,255,255,.06)",fixedrange=False),legend=dict(orientation="h",y=1.04,x=0),uirevision=f"{symbol}-chart")
     return fig
+
+
+CHART_CONFIG = {
+    "displayModeBar": True,
+    "scrollZoom": True,
+    "displaylogo": False,
+    "modeBarButtonsToAdd": ["drawline", "drawrect", "eraseshape"],
+    "toImageButtonOptions": {"format": "png", "filename": "wisalsaya_chart", "scale": 2},
+}
 
 def probability_chart(a: dict) -> go.Figure:
     fig = go.Figure(go.Bar(x=["ขาขึ้น","Sideway","ขาลง"],y=[a["up"],a["sideway"],a["down"]],text=[f"{a['up']}%",f"{a['sideway']}%",f"{a['down']}%"],textposition="auto"))
@@ -255,8 +272,15 @@ def probability_chart(a: dict) -> go.Figure:
     return fig
 
 # ---------- State ----------
-if "paper_trades" not in st.session_state: st.session_state.paper_trades = []
-if "journal" not in st.session_state: st.session_state.journal = []
+# One-time migration supports users coming from the old session-only release.
+if not st.session_state.get("session_migrated"):
+    legacy_trades = st.session_state.get("paper_trades", [])
+    legacy_journal = st.session_state.get("journal", [])
+    if legacy_trades or legacy_journal:
+        storage.migrate_session(legacy_trades, legacy_journal)
+    st.session_state["session_migrated"] = True
+st.session_state.pop("paper_trades", None)
+st.session_state.pop("journal", None)
 if "watchlist" not in st.session_state: st.session_state.watchlist = ["BTC","ETH","BNB"]
 
 # ---------- Sidebar ----------
@@ -269,15 +293,16 @@ with st.sidebar:
     capital = st.number_input("ทุนทดลอง (บาท)", min_value=100, value=1000, step=100)
     max_daily_loss = st.number_input("ขาดทุนสูงสุดต่อวัน", min_value=10, value=150, step=10)
     per_trade_risk = st.number_input("ความเสี่ยงต่อแผน", min_value=10, max_value=int(max_daily_loss), value=min(50,int(max_daily_loss)), step=10)
-    interval_label = st.selectbox("Timeframe หลัก", ["1H","4H","1D"], index=1)
-    interval = {"1H":"1h","4H":"4h","1D":"1d"}[interval_label]
+    interval_label = st.selectbox("Timeframe หลัก", ["15M","1H","4H","1D"], index=2)
+    interval = {"15M":"15m","1H":"1h","4H":"4h","1D":"1d"}[interval_label]
+    candle_limit = st.select_slider("จำนวนแท่งบนกราฟ", options=[100, 200, 300, 500, 750, 1000], value=300)
     st.caption("Paper Trading only • ไม่มีการส่งคำสั่งซื้อขาย")
 
 # ---------- Load ----------
 now = datetime.now(BANGKOK)
 with st.spinner("กำลังอัปเดตตลาด 20 เหรียญ..."):
     try:
-        market = load_market(interval)
+        market = load_market(interval, candle_limit)
     except Exception as exc:
         st.error(f"ดึงข้อมูลตลาดไม่สำเร็จ: {exc}")
         st.stop()
@@ -287,22 +312,17 @@ ranked = sorted(market.items(), key=lambda item: item[1]["a"]["score"], reverse=
 core_score = round(np.mean([market[x]["a"]["score"] for x in ("BTC","ETH","BNB")]))
 decision, decision_head, decision_note = decision_from_score(core_score, market["BTC"]["a"]["trend"], market["BTC"]["a"]["rsi"])
 
-# update paper trades using latest price
-for trade in st.session_state.paper_trades:
-    if trade["status"] != "OPEN": continue
-    p = market.get(trade["coin"],{}).get("price")
-    if p is None: continue
-    trade["current"] = p
-    if p <= trade["stop"]:
-        trade["status"] = "STOP"; trade["exit"] = trade["stop"]
-    elif p >= trade["target"]:
-        trade["status"] = "TARGET"; trade["exit"] = trade["target"]
-    exit_price = trade.get("exit", p)
-    trade["pnl"] = (exit_price-trade["entry"])/trade["entry"]*trade["position"]
+# Update persistent paper trades using the latest market price.
+for trade in storage.list_trades():
+    price = market.get(trade["coin"], {}).get("price")
+    if trade["status"] == "OPEN" and price is not None:
+        storage.update_market_price(trade["id"], float(price))
 
-closed_pnl = sum(t.get("pnl",0) for t in st.session_state.paper_trades if t["status"] != "OPEN")
-open_pnl = sum(t.get("pnl",0) for t in st.session_state.paper_trades if t["status"] == "OPEN")
-today_loss = abs(sum(min(0,t.get("pnl",0)) for t in st.session_state.paper_trades if t["created"] == now.strftime("%Y-%m-%d") and t["status"] != "OPEN"))
+paper_trades = storage.list_trades()
+closed_pnl = sum(t["realized_pnl"] for t in paper_trades if t["status"] != "OPEN")
+open_pnl = sum(t["unrealized_pnl"] for t in paper_trades if t["status"] == "OPEN")
+today_key = now.strftime("%Y-%m-%d")
+today_loss = abs(sum(min(0, t["realized_pnl"]) for t in paper_trades if t["created_at"].startswith(today_key) and t["status"] != "OPEN"))
 risk_remaining = max(0, max_daily_loss - today_loss)
 
 # ---------- Components ----------
@@ -349,7 +369,7 @@ if page == "Dashboard":
     with left:
         st.markdown('<div class="section-title">Chart Lab — Top Coin</div>', unsafe_allow_html=True)
         top_name, top_payload = ranked[0]
-        st.plotly_chart(candle_chart(top_payload["df"], top_name, top_payload["a"]), use_container_width=True, config={"displayModeBar":False})
+        st.plotly_chart(candle_chart(top_payload["df"], top_name, top_payload["a"]), use_container_width=True, config=CHART_CONFIG)
     with right:
         st.markdown('<div class="section-title">News Impact</div>', unsafe_allow_html=True)
         news = crypto_news()
@@ -395,7 +415,8 @@ elif page == "Chart Lab":
     with top4: metric_card("Volume", f"{a['volume_ratio']}x", f"Volatility {a['volatility']}%")
     left,right = st.columns([1.7,1])
     with left:
-        st.plotly_chart(candle_chart(p["df"],coin,a),use_container_width=True,config={"displayModeBar":False})
+        st.caption("ลากกราฟเพื่อเลื่อน • หมุนล้อ/Trackpad เพื่อซูม • ดับเบิลคลิกเพื่อคืนมุมมอง • Hover เพื่อดู OHLC")
+        st.plotly_chart(candle_chart(p["df"],coin,a),use_container_width=True,config=CHART_CONFIG)
     with right:
         st.markdown(f"""
         <div class="ui-card">
@@ -431,36 +452,93 @@ elif page == "Trade Plan":
     m3.metric("Risk/Reward",f"1:{rr:.2f}")
     reason = st.text_area("เหตุผลของแผน", value=f"Score {a['score']} • Trend {a['trend']} • RSI {a['rsi']} • รอ Trigger")
     if st.button("สร้าง Paper Trade", disabled=(risk_remaining<=0 or entry<=stop or target<=entry)):
-        st.session_state.paper_trades.append({"created":now.strftime("%Y-%m-%d"),"coin":coin,"entry":entry,"stop":stop,"target":target,"risk":risk,"position":position,"status":"OPEN","current":market[coin]["price"],"pnl":0.0,"reason":reason})
-        st.success("สร้าง Paper Trade แล้ว ระบบจะติดตามเมื่อรีเฟรชแอป")
+        trade_id = storage.create_trade({
+            "coin": coin, "entry": entry, "stop_loss": stop, "take_profit": target,
+            "risk_baht": risk, "position_baht": position,
+            "current_price": market[coin]["price"], "reason": reason,
+        })
+        st.success(f"สร้าง Paper Trade #{trade_id} และบันทึกลงฐานข้อมูลแล้ว")
+        st.rerun()
     st.markdown('<div class="section-title">Paper Portfolio</div>',unsafe_allow_html=True)
-    if st.session_state.paper_trades:
-        tdf = pd.DataFrame(st.session_state.paper_trades)
-        st.dataframe(tdf[["created","coin","entry","stop","target","status","current","pnl","reason"]],hide_index=True,use_container_width=True)
+    paper_trades = storage.list_trades()
+    if paper_trades:
+        tdf = pd.DataFrame(paper_trades)
+        shown = tdf[["id","created_at","coin","entry","stop_loss","take_profit","status","current_price","unrealized_pnl","realized_pnl","reason"]]
+        st.dataframe(shown,hide_index=True,use_container_width=True)
         st.download_button("ดาวน์โหลด Paper Trades CSV",tdf.to_csv(index=False).encode("utf-8-sig"),f"paper_trades_{now:%Y%m%d}.csv","text/csv")
+
+        open_trades = [t for t in paper_trades if t["status"] == "OPEN"]
+        if open_trades:
+            st.markdown("#### ปิดแผนเอง")
+            close_labels = {f"#{t['id']} • {t['coin']} • PnL {t['unrealized_pnl']:+.2f} บาท": t for t in open_trades}
+            close_label = st.selectbox("เลือกรายการ OPEN", list(close_labels), key="manual_close_trade")
+            close_trade = close_labels[close_label]
+            manual_exit = st.number_input(
+                "ราคาปิดแผน",
+                min_value=0.0,
+                value=float(close_trade["current_price"]),
+                format="%.8f",
+                key=f"manual_exit_{close_trade['id']}",
+            )
+            if st.button("ยืนยันปิดแผนเอง", type="primary"):
+                storage.close_trade(close_trade["id"], manual_exit)
+                st.success(f"ปิดแผน #{close_trade['id']} แล้ว")
+                st.rerun()
+
     else:
         st.info("ยังไม่มี Paper Trade")
+    st.markdown("#### สำรอง/กู้คืนข้อมูล")
+    import_file = st.file_uploader("Import Paper Trades CSV", type="csv", key="trade_import")
+    if import_file and st.button("นำเข้า Paper Trades"):
+        count = storage.import_trades_csv(pd.read_csv(import_file))
+        st.success(f"นำเข้า {count} รายการ")
+        st.rerun()
 
 elif page == "Journal":
     page_header("Trading Journal", "บันทึกการตัดสินใจและบทเรียน")
-    with st.form("journal_form",clear_on_submit=True):
+    trade_options = {"ไม่เชื่อมกับ Paper Trade": None}
+    trade_options.update({f"#{t['id']} • {t['coin']} • {t['status']}": t for t in storage.list_trades()})
+    with st.form("journal_form", clear_on_submit=True, border=True):
         c1,c2 = st.columns(2)
         date = c1.date_input("วันที่",value=now.date())
-        coin = c2.selectbox("เหรียญ",["ยังไม่ได้เลือก"]+list(COINS.keys()))
+        selected_trade_label = c2.selectbox("เชื่อมกับ Paper Trade (ถ้ามี)", list(trade_options))
+        linked_trade = trade_options[selected_trade_label]
+        default_coin_index = list(COINS.keys()).index(linked_trade["coin"]) + 1 if linked_trade else 0
+        coin = st.selectbox("เหรียญ",["ยังไม่ได้เลือก"]+list(COINS.keys()), index=default_coin_index)
         decision_j = st.selectbox("Decision",["WAIT","WATCH","READY","PAPER TRADE","STOP FOR TODAY"])
-        result = st.number_input("ผลลัพธ์จำลอง (บาท)",value=0.0,step=1.0)
+        linked_result = linked_trade["realized_pnl"] if linked_trade and linked_trade["status"] != "OPEN" else 0.0
+        result = st.number_input("ผลลัพธ์จำลอง (บาท)",value=float(linked_result),step=1.0)
         emotion = st.select_slider("อารมณ์",["กังวล","ลังเล","ปกติ","มั่นใจ","มั่นใจมาก"],value="ปกติ")
-        lesson = st.text_area("บทเรียน")
-        submitted = st.form_submit_button("บันทึก Journal")
+        lesson = st.text_area(
+            "บทเรียน / Comment Journal",
+            placeholder="พิมพ์เหตุผล สิ่งที่สังเกต และบทเรียนจากแผนนี้…",
+            height=150,
+            key="journal_notes_input",
+        )
+        submitted = st.form_submit_button("บันทึก Journal", type="primary", use_container_width=True)
     if submitted:
-        st.session_state.journal.append({"วันที่":str(date),"เหรียญ":coin,"Decision":decision_j,"ผลลัพธ์":result,"อารมณ์":emotion,"บทเรียน":lesson})
-        st.success("บันทึกเรียบร้อย")
-    if st.session_state.journal:
-        jdf = pd.DataFrame(st.session_state.journal)
+        if not lesson.strip():
+            st.warning("กรุณาพิมพ์บทเรียนหรือ Comment อย่างน้อย 1 ข้อ")
+        else:
+            journal_id = storage.create_journal({
+                "journal_date": str(date), "trade_id": linked_trade["id"] if linked_trade else None,
+                "coin": coin, "decision": decision_j, "result_baht": result,
+                "emotion": emotion, "notes": lesson.strip(),
+            })
+            st.success(f"บันทึก Journal #{journal_id} ถาวรแล้ว")
+            st.rerun()
+    journal_rows = storage.list_journal()
+    if journal_rows:
+        jdf = pd.DataFrame(journal_rows)
         st.dataframe(jdf,hide_index=True,use_container_width=True)
         st.download_button("ดาวน์โหลด Journal CSV",jdf.to_csv(index=False).encode("utf-8-sig"),f"journal_{now:%Y%m%d}.csv","text/csv")
     else:
         st.info("ยังไม่มีบันทึก")
+    journal_import = st.file_uploader("Import Journal CSV", type="csv", key="journal_import")
+    if journal_import and st.button("นำเข้า Journal"):
+        count = storage.import_journal_csv(pd.read_csv(journal_import))
+        st.success(f"นำเข้า {count} บันทึก")
+        st.rerun()
 
 else:
     page_header("Learning Path", "เรียนทีละขั้น ไม่เร่งใช้เงินจริง")
@@ -474,4 +552,4 @@ else:
         st.markdown(f'<div class="ui-card"><div class="section-kicker">{w}</div><div class="section-title">{title}</div><div class="metric-note">ความคืบหน้า {progress}</div></div><br>',unsafe_allow_html=True)
     st.markdown('<div class="coach"><b>กฎสำคัญ</b><br><br>• ไม่จำเป็นต้องเทรดทุกวัน<br>• ไม่มี Stop Loss = ไม่มีแผน<br>• เป้าหมายแรกคือวินัย ไม่ใช่กำไรสูงสุด<br>• ผลลัพธ์ Paper Trading ต้องทดสอบอย่างน้อย 30–50 แผน</div>',unsafe_allow_html=True)
 
-st.caption("Wisalsaya Crypto Decision Lab v3.0 Full Premium Edition • วิเคราะห์เพื่อการศึกษาและ Paper Trading เท่านั้น • ไม่มีคำสั่งซื้อขายอัตโนมัติ")
+st.caption("Wisalsaya Crypto Decision Lab v3.1 • Persistent Paper Trading + Interactive Chart • วิเคราะห์เพื่อการศึกษาเท่านั้น")
